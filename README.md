@@ -37,6 +37,8 @@ with torch.inference_mode():
 
     latent_acts = []
     for sae, hidden_state in zip(saes.values(), outputs.hidden_states):
+        # (N, D) input shape expected
+        hidden_state = hidden_state.flatten(0, 1)
         latent_acts.append(sae.encode(hidden_state))
 
 # Do stuff with the latent activations
