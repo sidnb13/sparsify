@@ -44,7 +44,7 @@ with torch.inference_mode():
 # Do stuff with the latent activations
 ```
 
-For use cases beyond collecting residual stream SAE activations, we recommend PyTorch hooks ([see examples](https://gist.github.com/luciaquirke/7105708dac0cfc632d68f33c79b59e5c).) 
+For use cases beyond collecting residual stream SAE activations, we recommend PyTorch hooks ([see examples](https://gist.github.com/luciaquirke/7105708dac0cfc632d68f33c79b59e5c).)
 
 ## Training SAEs and transcoders
 
