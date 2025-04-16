@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.1.0 (2025-04-16)
+
+### Features
+
+- Update from deprecated publish action
+  ([`aafc9fc`](https://github.com/EleutherAI/sparsify/commit/aafc9fc049e7e8f18a017e99f122343f0bcb4006))
+
+fix: deprecated initial release build
+
+
 ## v1.0.0 (2025-04-16)
 
 ### Features
