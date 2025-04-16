@@ -134,6 +134,10 @@ def load_artifacts(
         if limit := args.max_examples:
             dataset = dataset.select(range(limit))
 
+    # Drop examples that are indivisible across processes to prevent deadlock
+    remainder_examples = len(dataset) % dist.get_world_size()
+    dataset = dataset.select(range(len(dataset) - remainder_examples))
+
     return model, dataset
 
 
