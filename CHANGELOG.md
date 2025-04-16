@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v1.0.0 (2025-04-16)
+
+### Features
+
+- Empty commit for initial release
+  ([`877ef6f`](https://github.com/EleutherAI/sparsify/commit/877ef6f7219e9a4424bf9cb51be5bef5ac2adca4))
+
+BREAKING CHANGE: non-breaking inital major commit
+
+### Breaking Changes
+
+- Non-breaking inital major commit
+
+
 ## v0.0.1 (2025-04-16)
 
 ### Bug Fixes
