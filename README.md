@@ -139,6 +139,8 @@ If you'd like to help out with any of these, please feel free to open a PR! You 
 
 Run `pip install pre-commit` then `pre-commit install`.
 
+We use [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/).
+
 ## Experimental features
 
 Linear k decay schedule:
