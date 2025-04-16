@@ -137,7 +137,7 @@ If you'd like to help out with any of these, please feel free to open a PR! You 
 
 ## Development
 
-Run `pip install pre-commit` then `pre-commit install`.
+Run `pip install -e .[dev]` from the sparsify directory.
 
 We use [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/).
 
