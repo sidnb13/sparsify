@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.1.1 (2025-04-16)
+
+### Bug Fixes
+
+- Hang when the number of examples is indivisible across processes
+  ([`0f662ad`](https://github.com/EleutherAI/sparsify/commit/0f662adf7705a836aa8c910b39b33546a8cf7975))
+
+
 ## v1.1.0 (2025-04-16)
 
 ### Features
