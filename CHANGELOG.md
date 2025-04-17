@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.1.2 (2025-04-17)
+
+### Bug Fixes
+
+- Only drop in dist
+  ([`b18bd0e`](https://github.com/EleutherAI/sparsify/commit/b18bd0e272044e42dce816583214e9d099484575))
+
+
 ## v1.1.1 (2025-04-16)
 
 ### Bug Fixes
