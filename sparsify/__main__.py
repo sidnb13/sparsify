@@ -134,10 +134,6 @@ def load_artifacts(
         if limit := args.max_examples:
             dataset = dataset.select(range(limit))
 
-    # Drop examples that are indivisible across processes to prevent deadlock
-    remainder_examples = len(dataset) % dist.get_world_size()
-    dataset = dataset.select(range(len(dataset) - remainder_examples))
-
     return model, dataset
 
 
@@ -169,6 +165,11 @@ def run():
             dist.barrier()
             if rank != 0:
                 model, dataset = load_artifacts(args, rank)
+
+            # Drop examples that are indivisible across processes to prevent deadlock
+            remainder_examples = len(dataset) % dist.get_world_size()
+            dataset = dataset.select(range(len(dataset) - remainder_examples))
+
             dataset = dataset.shard(dist.get_world_size(), rank)
 
         print(f"Training on '{args.dataset}' (split '{args.split}')")
