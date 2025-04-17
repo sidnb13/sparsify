@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.1.3 (2025-04-17)
+
+### Bug Fixes
+
+- Save best in dist mode
+  ([`885bcd5`](https://github.com/EleutherAI/sparsify/commit/885bcd5c1e94d6b4d82b200545fe0ee1f830068e))
+
+
 ## v1.1.2 (2025-04-17)
 
 ### Bug Fixes
