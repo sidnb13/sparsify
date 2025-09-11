@@ -145,14 +145,17 @@ class SparseCoder(nn.Module):
             cfg = SparseCoderConfig.from_dict(cfg_dict, drop_extra_fields=True)
 
         from safetensors import safe_open
+
         safetensors_path = str(path / "sae.safetensors")
-        
+
         with safe_open(safetensors_path, framework="pt", device="cpu") as f:
             first_key = next(iter(f.keys()))
             reference_dtype = f.get_tensor(first_key).dtype
 
-        sae = SparseCoder(d_in, cfg, device=device, decoder=decoder, dtype=reference_dtype)
-        
+        sae = SparseCoder(
+            d_in, cfg, device=device, decoder=decoder, dtype=reference_dtype
+        )
+
         load_model(
             model=sae,
             filename=safetensors_path,
