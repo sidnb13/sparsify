@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.2.0 (2025-09-22)
+
+### Features
+
+- Exclude tokens defined by user from training
+  ([`f346038`](https://github.com/EleutherAI/sparsify/commit/f3460385efc42fac6e760357f3c34562783b515c))
+
+
 ## v1.1.3 (2025-04-17)
 
 ### Bug Fixes
