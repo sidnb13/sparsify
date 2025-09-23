@@ -7,6 +7,7 @@ import einops
 import torch
 from huggingface_hub import snapshot_download
 from natsort import natsorted
+from safetensors import safe_open
 from safetensors.torch import load_model, save_model
 from torch import Tensor, nn
 
@@ -144,8 +145,6 @@ class SparseCoder(nn.Module):
             d_in = cfg_dict.pop("d_in")
             cfg = SparseCoderConfig.from_dict(cfg_dict, drop_extra_fields=True)
 
-        from safetensors import safe_open
-
         safetensors_path = str(path / "sae.safetensors")
 
         with safe_open(safetensors_path, framework="pt", device="cpu") as f:
@@ -160,6 +159,7 @@ class SparseCoder(nn.Module):
             model=sae,
             filename=safetensors_path,
             device=str(device),
+            # TODO: Maybe be more fine-grained about this in the future?
             strict=decoder,
         )
         return sae
