@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.2.1 (2025-09-25)
+
+### Bug Fixes
+
+- Address code review comments - move import to top, restore TODO
+  ([`f86219a`](https://github.com/EleutherAI/sparsify/commit/f86219a9a84f163c002159683c5917b11ea03c54))
+
+- Auto-detect dtype from safetensors file to resolve loading mismatch
+  ([`8fc921f`](https://github.com/EleutherAI/sparsify/commit/8fc921ffb8e938e78d954140a4caceaba952986c))
+
+
 ## v1.2.0 (2025-09-22)
 
 ### Features
