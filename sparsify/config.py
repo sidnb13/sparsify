@@ -83,7 +83,13 @@ class TrainConfig(Serializable):
     """Number of tokens after which a feature is considered dead."""
 
     exclude_tokens: list[int] = list_field()
-    """List of tokens to ignore during sparse coders training."""
+    """
+    List of tokens to ignore during sparse coders training.
+
+    Note that during end-to-end training the loss mean
+    will include any excluded tokens in the denominator
+    N, slightly underestimating the final loss.
+    """
 
     hookpoints: list[str] = list_field()
     """List of hookpoints to train sparse coders on."""
