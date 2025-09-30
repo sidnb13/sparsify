@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.2.2 (2025-09-30)
+
+### Bug Fixes
+
+- Revert "Merge pull request #118 from EleutherAI/exclude-follow-up"
+  ([`304502c`](https://github.com/EleutherAI/sparsify/commit/304502c1a48b1aa6ae734fc3e8893d4743df6006))
+
+This reverts commit 5c9c6fb89448feb4b87b23254a52ad02e60c10db, reversing changes made to
+  bb792438e62b1ebe727720026fa7cd1d136752d1.
+
+
 ## v1.2.1 (2025-09-25)
 
 ### Bug Fixes
