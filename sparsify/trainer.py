@@ -298,7 +298,6 @@ class Trainer:
         }
 
         tokens_mask: torch.Tensor
-        identity_mask = torch.empty([], dtype=torch.bool, device=device)
 
         acc_steps = self.cfg.grad_acc_steps * self.cfg.micro_acc_steps
         denom = acc_steps * self.cfg.wandb_log_frequency
@@ -404,10 +403,6 @@ class Trainer:
                 mean = self.maybe_all_reduce(outputs.mean(0))
                 raw.b_dec.data = mean.to(raw.dtype)
 
-                # Provide an identity mask for runs that do not exclude tokens
-                nonlocal identity_mask
-                identity_mask = torch.ones_like(outputs, dtype=torch.bool)
-
             # Make sure the W_dec is still unit-norm if we're autoencoding
             if raw.cfg.normalize_decoder and not self.cfg.sae.transcode:
                 raw.set_decoder_norm_to_unit_norm()
@@ -457,11 +452,7 @@ class Trainer:
 
         for batch in dl:
             x = batch["input_ids"].to(device)
-            tokens_mask = (
-                torch.isin(x, self.exclude_tokens, invert=True)
-                if self.cfg.exclude_tokens
-                else identity_mask
-            )
+            tokens_mask = torch.isin(x, self.exclude_tokens, invert=True)
 
             if not maybe_wrapped:
                 # Wrap the SAEs with Distributed Data Parallel. We have to do this
