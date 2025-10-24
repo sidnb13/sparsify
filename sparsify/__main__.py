@@ -21,6 +21,30 @@ from .data import MemmapDataset, chunk_and_tokenize
 from .trainer import TrainConfig, Trainer
 
 
+def get_device(force: str | None = None) -> str:
+    """Get the best available device (CUDA, MPS, or CPU)."""
+    if force:
+        return force
+    
+    if torch.cuda.is_available():
+        return "cuda"
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        return "mps"
+    else:
+        return "cpu"
+
+
+def get_device_type() -> str:
+    """Get the device type for distributed training."""
+    device = get_device()
+    if device == "cuda":
+        return "nccl"
+    elif device == "mps":
+        return "gloo"  # MPS doesn't support NCCL, use GLOO instead
+    else:
+        return "gloo"
+
+
 @dataclass
 class RunConfig(TrainConfig):
     model: str = field(
@@ -69,25 +93,42 @@ class RunConfig(TrainConfig):
     )
     """Number of processes to use for preprocessing data"""
 
+    device: str | None = None
+    """Force device to use (cpu, cuda, mps). If None, auto-detect."""
+
 
 def load_artifacts(
     args: RunConfig, rank: int
 ) -> tuple[PreTrainedModel, Dataset | MemmapDataset]:
+    device = get_device(args.device)
+    
     if args.load_in_8bit:
         dtype = torch.float16
-    elif torch.cuda.is_bf16_supported():
+    elif device == "cuda" and torch.cuda.is_bf16_supported():
         dtype = torch.bfloat16
+    elif device == "mps":
+        # MPS has numerical issues with float16, use float32
+        dtype = torch.float32
     else:
         dtype = "auto"
 
     # End-to-end training requires a model with a causal LM head
     model_cls = AutoModel if args.loss_fn == "fvu" else AutoModelForCausalLM
+    
+    # Set device map based on available device
+    if device == "cuda":
+        device_map = {"": f"cuda:{rank}"}
+    elif device == "mps":
+        device_map = {"": "mps"}
+    else:
+        device_map = {"": "cpu"}
+    
     model = model_cls.from_pretrained(
         args.model,
-        device_map={"": f"cuda:{rank}"},
+        device_map=device_map,
         quantization_config=(
             BitsAndBytesConfig(load_in_8bit=args.load_in_8bit)
-            if args.load_in_8bit
+            if args.load_in_8bit and device == "cuda"  # Only support 8-bit on CUDA
             else None
         ),
         revision=args.revision,
@@ -140,27 +181,30 @@ def load_artifacts(
 def run():
     local_rank = os.environ.get("LOCAL_RANK")
     ddp = local_rank is not None
-    rank = int(local_rank) if ddp else 0
+    rank = int(local_rank) if ddp and local_rank is not None else 0
 
     if ddp:
-        torch.cuda.set_device(int(local_rank))
+        # Only support DDP on CUDA for now
+        if not torch.cuda.is_available():
+            print("Warning: DDP is only supported on CUDA devices. Falling back to single-device training.")
+            ddp = False
+        else:
+            torch.cuda.set_device(rank)
+            # Increase the default timeout in order to account for slow downloads
+            # and data preprocessing on the main rank
+            dist.init_process_group(
+                "nccl", device_id=torch.device(rank), timeout=timedelta(weeks=1)
+            )
 
-        # Increase the default timeout in order to account for slow downloads
-        # and data preprocessing on the main rank
-        dist.init_process_group(
-            "nccl", device_id=torch.device(rank), timeout=timedelta(weeks=1)
-        )
-
-        if rank == 0:
-            print(f"Using DDP across {dist.get_world_size()} GPUs.")
+            if rank == 0:
+                print(f"Using DDP across {dist.get_world_size()} GPUs.")
 
     args = parse(RunConfig)
 
     # Prevent ranks other than 0 from printing
     with nullcontext() if rank == 0 else redirect_stdout(None):
-        # Awkward hack to prevent other ranks from duplicating data preprocessing
-        if not ddp or rank == 0:
-            model, dataset = load_artifacts(args, rank)
+        model, dataset = load_artifacts(args, rank)
+        
         if ddp:
             dist.barrier()
             if rank != 0:

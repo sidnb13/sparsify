@@ -1,7 +1,9 @@
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, Optional
 
 import torch
 import torch.nn.functional as F
+
+from .utils import _device_aware_embedding_bag
 
 
 class EncoderOutput(NamedTuple):
@@ -11,7 +13,7 @@ class EncoderOutput(NamedTuple):
     top_indices: torch.Tensor
     """Indices of the top-k features."""
 
-    pre_acts: torch.Tensor
+    pre_acts: Optional[torch.Tensor]
     """Activations before the top-k selection."""
 
 
@@ -56,7 +58,7 @@ class FusedEncoder(torch.autograd.Function):
 
         # --- Grad w.r.t. input ---
         if ctx.needs_input_grad[0]:
-            grad_input = F.embedding_bag(
+            grad_input = _device_aware_embedding_bag(
                 indices,
                 weight,
                 mode="sum",

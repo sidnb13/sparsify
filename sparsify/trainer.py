@@ -82,8 +82,25 @@ class Trainer:
 
                 # Add suffix to the name to disambiguate multiple seeds
                 name = f"{hook}/seed{seed}" if len(cfg.init_seeds) > 1 else hook
+                # Construct PKMConfig from individual fields if using PKM
+                pkm_cfg = None
+                if cfg.encode_method == "pkm":
+                    from .config import PKMConfig
+
+                    pkm_cfg = PKMConfig(
+                        input_dropout=cfg.pkm_input_dropout,
+                        query_dropout=cfg.pkm_query_dropout,
+                        pre_layernorm=cfg.pkm_pre_layernorm,
+                    )
+
                 self.saes[name] = SparseCoder(
-                    input_widths[hook], cfg.sae, device, dtype=torch.float32
+                    input_widths[hook],
+                    cfg.sae,
+                    device,
+                    dtype=torch.float32,
+                    pkm_cfg=pkm_cfg,
+                    encode_method=cfg.encode_method,
+                    ctx_len=cfg.ctx_len,
                 )
 
         assert isinstance(dataset, Sized)
@@ -315,6 +332,11 @@ class Trainer:
             else float("inf")
         )
 
+        # FLOPs tracking
+        avg_encoding_flops = defaultdict(float)
+        avg_decoding_flops = defaultdict(float)
+        avg_total_flops = defaultdict(float)
+
         if self.cfg.loss_fn == "ce":
             batch = next(iter(dl))
             x = batch["input_ids"].to(device)
@@ -392,16 +414,14 @@ class Trainer:
             # On the first iteration, initialize the encoder and decoder biases
             raw = self.saes[name]
             if self.global_step == 0 and not self.cfg.finetune:
-                # Ensure the preactivations are centered at initialization
-                # This is mathematically equivalent to Anthropic's proposal of
-                # subtracting the decoder bias
                 if self.cfg.sae.transcode:
-                    mean = self.maybe_all_reduce(inputs.mean(0)).to(raw.dtype)
+                    mean = self.maybe_all_reduce(inputs.mean(0)).float().cpu()
+                    mean = mean.to(raw.dtype).to(raw.encoder.bias.device)
                     mean_image = -mean @ raw.encoder.weight.data.T
                     raw.encoder.bias.data = mean_image
 
-                mean = self.maybe_all_reduce(outputs.mean(0))
-                raw.b_dec.data = mean.to(raw.dtype)
+                mean = self.maybe_all_reduce(outputs.mean(0)).float().cpu()
+                raw.b_dec.data = mean.to(raw.dtype).to(raw.b_dec.device)
 
             # Make sure the W_dec is still unit-norm if we're autoencoding
             if raw.cfg.normalize_decoder and not self.cfg.sae.transcode:
@@ -439,6 +459,11 @@ class Trainer:
                 avg_multi_topk_fvu[name] += float(
                     self.maybe_all_reduce(out.multi_topk_fvu.detach()) / denom
                 )
+
+            # Track FLOPs
+            avg_encoding_flops[name] += float(out.encoding_flops) / denom
+            avg_decoding_flops[name] += float(out.decoding_flops) / denom
+            avg_total_flops[name] += float(out.total_flops) / denom
 
             # Do a "local" backward pass if we're not training end-to-end
             loss = (
@@ -577,6 +602,12 @@ class Trainer:
                     if rank_zero:
                         info["k"] = k
 
+                        # Add FLOPs metrics
+                        for name in self.saes:
+                            info[f"encoding_flops/{name}"] = avg_encoding_flops[name]
+                            info[f"decoding_flops/{name}"] = avg_decoding_flops[name]
+                            info[f"total_flops/{name}"] = avg_total_flops[name]
+
                         if wandb is not None:
                             wandb.log(info, step=step)
 
@@ -585,6 +616,11 @@ class Trainer:
                 avg_multi_topk_fvu.clear()
                 avg_ce = 0.0
                 avg_kl = 0.0
+                
+                # Reset FLOPs counters
+                avg_encoding_flops.clear()
+                avg_decoding_flops.clear()
+                avg_total_flops.clear()
 
             self.global_step += 1
             pbar.update()
@@ -687,7 +723,7 @@ class Trainer:
 
     def save(self):
         """Save the SAEs and training state to disk."""
-        path = f'{self.cfg.save_dir}/{self.cfg.run_name or "unnamed"}'
+        path = f"{self.cfg.save_dir}/{self.cfg.run_name or 'unnamed'}"
 
         rank_zero = not dist.is_initialized() or dist.get_rank() == 0
 
@@ -700,7 +736,7 @@ class Trainer:
 
     def save_best(self, avg_loss: float | dict[str, float]):
         """Save individual sparse coders to disk if they have the lowest loss."""
-        base_path = f'{self.cfg.save_dir}/{self.cfg.run_name or "unnamed"}/best'
+        base_path = f"{self.cfg.save_dir}/{self.cfg.run_name or 'unnamed'}/best"
         rank_zero = not dist.is_initialized() or dist.get_rank() == 0
 
         if isinstance(avg_loss, dict):

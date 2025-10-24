@@ -4,6 +4,7 @@ from typing import Any, Type, TypeVar, cast
 import torch
 from accelerate.utils import send_to_device
 from torch import Tensor, nn
+from torch.nn import functional as F
 from transformers import PreTrainedModel
 
 T = TypeVar("T")
@@ -80,7 +81,7 @@ def set_submodule(model: nn.Module, submodule_path: str, new_submodule: nn.Modul
 
 # Fallback implementation of SAE decoder
 def eager_decode(top_indices: Tensor, top_acts: Tensor, W_dec: Tensor):
-    return nn.functional.embedding_bag(
+    return _device_aware_embedding_bag(
         top_indices, W_dec.mT, per_sample_weights=top_acts, mode="sum"
     )
 
@@ -88,6 +89,20 @@ def eager_decode(top_indices: Tensor, top_acts: Tensor, W_dec: Tensor):
 # Triton implementation of SAE decoder
 def triton_decode(top_indices: Tensor, top_acts: Tensor, W_dec: Tensor):
     return xformers_embedding_bag(top_indices, W_dec.mT, top_acts)
+
+
+def _device_aware_embedding_bag(indices, weight, per_sample_weights=None, mode="sum"):
+    if indices.device.type == "mps":
+        # MPS-compatible implementation
+        embeddings = F.embedding(indices, weight)
+        if per_sample_weights is not None:
+            embeddings = embeddings * per_sample_weights.unsqueeze(-1)
+        return embeddings.sum(dim=1)
+    else:
+        # Use optimized embedding_bag for other devices
+        return F.embedding_bag(
+            indices, weight, per_sample_weights=per_sample_weights, mode=mode
+        )
 
 
 try:

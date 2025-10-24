@@ -1,7 +1,7 @@
 import json
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import einops
 import torch
@@ -11,8 +11,9 @@ from safetensors import safe_open
 from safetensors.torch import load_model, save_model
 from torch import Tensor, nn
 
-from .config import SparseCoderConfig
+from .config import PKMConfig, SparseCoderConfig
 from .fused_encoder import EncoderOutput, fused_encoder
+from .pkm import PKM
 from .utils import decoder_impl
 
 
@@ -33,6 +34,15 @@ class ForwardOutput(NamedTuple):
 
     multi_topk_fvu: Tensor
     """Multi-TopK FVU, if applicable."""
+    
+    encoding_flops: int
+    """FLOPs for the encoding step."""
+    
+    decoding_flops: int
+    """FLOPs for the decoding step."""
+    
+    total_flops: int
+    """Total FLOPs for the forward pass."""
 
 
 class SparseCoder(nn.Module):
@@ -44,23 +54,50 @@ class SparseCoder(nn.Module):
         dtype: torch.dtype | None = None,
         *,
         decoder: bool = True,
+        pkm_cfg: PKMConfig | None = None,
+        encode_method: Literal["linear", "pkm"] = "linear",
+        ctx_len: int = 128,
     ):
         super().__init__()
         self.cfg = cfg
         self.d_in = d_in
         self.num_latents = cfg.num_latents or d_in * cfg.expansion_factor
+        self.encode_method = encode_method
 
-        self.encoder = nn.Linear(d_in, self.num_latents, device=device, dtype=dtype)
-        self.encoder.bias.data.zero_()
+        if encode_method == "linear":
+            self.encoder = nn.Linear(d_in, self.num_latents, device=device, dtype=dtype)
+            self.encoder.bias.data.zero_()
+        elif encode_method == "pkm":
+            assert pkm_cfg is not None, "PKM configuration is required."
+            self.pkm = PKM(
+                d_in,
+                self.num_latents,
+                ctx_len=ctx_len,
+                topk=cfg.k,
+                input_dropout=pkm_cfg.input_dropout,
+                query_dropout=pkm_cfg.query_dropout,
+                pre_layernorm=pkm_cfg.pre_layernorm,
+            )
+            self.pkm = self.pkm.to(device)
 
         if decoder:
-            # Transcoder initialization: use zeros
-            if cfg.transcode:
-                self.W_dec = nn.Parameter(torch.zeros_like(self.encoder.weight.data))
-
-            # Sparse autoencoder initialization: use the transpose of encoder weights
-            else:
-                self.W_dec = nn.Parameter(self.encoder.weight.data.clone())
+            if encode_method == "linear":
+                # Transcoder initialization: use zeros
+                if cfg.transcode:
+                    self.W_dec = nn.Parameter(
+                        torch.zeros_like(self.encoder.weight.data)
+                    )
+                # Sparse autoencoder initialization: 
+                # use the transpose of encoder weights
+                else:
+                    self.W_dec = nn.Parameter(self.encoder.weight.data.clone())
+                    if self.cfg.normalize_decoder:
+                        self.set_decoder_norm_to_unit_norm()
+            elif encode_method == "pkm":
+                # For PKM, initialize decoder weights randomly
+                self.W_dec = nn.Parameter(
+                    torch.randn(self.num_latents, d_in, device=device, dtype=dtype)
+                )
                 if self.cfg.normalize_decoder:
                     self.set_decoder_norm_to_unit_norm()
         else:
@@ -180,20 +217,81 @@ class SparseCoder(nn.Module):
 
     @property
     def device(self):
-        return self.encoder.weight.device
+        if self.encode_method == "linear":
+            return self.encoder.weight.device
+        else:  # PKM
+            return next(self.pkm.parameters()).device
 
     @property
     def dtype(self):
-        return self.encoder.weight.dtype
+        if self.encode_method == "linear":
+            return self.encoder.weight.dtype
+        else:  # PKM
+            return next(self.pkm.parameters()).dtype
+
+    def _manual_encode_flops(self, x: Tensor) -> int:
+        """Manually count encoding FLOPs based on the encoding method."""
+        batch_size = x.shape[0]
+        
+        if self.encode_method == "linear":
+            # Full linear layer: batch * d_in * num_latents
+            # This includes the matrix multiply
+            linear_flops = batch_size * self.d_in * self.num_latents
+            # ReLU: batch * num_latents (element-wise)
+            relu_flops = batch_size * self.num_latents
+            # TopK: approximate as batch * num_latents comparisons
+            topk_flops = batch_size * self.num_latents
+            return linear_flops + relu_flops + topk_flops
+            
+        elif self.encode_method == "pkm":
+            import math
+            # PKM uses factorized product keys
+            # Split into 2 subspaces, sqrt(n) keys per subspace
+            num_keys = int(math.sqrt(self.num_latents))
+            half_dim = self.d_in // 2
+            
+            # Query projection and norm (2 heads)
+            # LayerNorm: ~4 * batch * d_in (mean, var, scale, shift)
+            ln_flops = 4 * batch_size * self.d_in
+            
+            # Einsum: "p b t d, n p d -> b t p n"
+            # For each of 2 heads (p=2): batch * num_keys * half_dim
+            einsum_flops = 2 * batch_size * num_keys * half_dim
+            
+            # TopK per head: 2 * batch * num_keys
+            topk_per_head = 2 * batch_size * num_keys
+            
+            # Cartesian product and final topK: batch * topk^2
+            cartesian_flops = batch_size * self.cfg.k * self.cfg.k
+            
+            return ln_flops + einsum_flops + topk_per_head + cartesian_flops
+        
+        return 0
+    
+    def _manual_decode_flops(self, top_acts: Tensor) -> int:
+        """Manually count decoding FLOPs."""
+        batch_size = top_acts.shape[0]
+        k = top_acts.shape[1]
+        # Sparse matmul: batch * k * d_in
+        return batch_size * k * self.d_in
 
     def encode(self, x: Tensor) -> EncoderOutput:
         """Encode the input and select the top-k latents."""
         if not self.cfg.transcode:
             x = x - self.b_dec
 
-        return fused_encoder(
-            x, self.encoder.weight, self.encoder.bias, self.cfg.k, self.cfg.activation
-        )
+        if self.encode_method == "linear":
+            return fused_encoder(
+                x,
+                self.encoder.weight,
+                self.encoder.bias,
+                self.cfg.k,
+                self.cfg.activation,
+            )
+        elif self.encode_method == "pkm":
+            return self.pkm(x)
+        else:
+            raise ValueError(f"Unknown encode method: {self.encode_method}")
 
     def decode(self, top_acts: Tensor, top_indices: Tensor) -> Tensor:
         assert self.W_dec is not None, "Decoder weight was not initialized."
@@ -201,22 +299,33 @@ class SparseCoder(nn.Module):
         y = decoder_impl(top_indices, top_acts.to(self.dtype), self.W_dec.mT)
         return y + self.b_dec
 
-    # Wrapping the forward in bf16 autocast improves performance by almost 2x
-    @torch.autocast(
-        "cuda",
-        dtype=torch.bfloat16,
-        enabled=torch.cuda.is_bf16_supported(),
-    )
     def forward(
         self, x: Tensor, y: Tensor | None = None, *, dead_mask: Tensor | None = None
     ) -> ForwardOutput:
+        # Use autocast only on CUDA with bf16 support (not on MPS)
+        device_type = x.device.type
+        use_autocast = device_type == "cuda" and torch.cuda.is_bf16_supported()
+        
+        with torch.autocast(
+            device_type="cuda",
+            dtype=torch.bfloat16,
+            enabled=use_autocast,
+        ):
+            return self._forward_impl(x, y, dead_mask=dead_mask)
+
+    def _forward_impl(
+        self, x: Tensor, y: Tensor | None = None, *, dead_mask: Tensor | None = None
+    ) -> ForwardOutput:
+        # Count encoding FLOPs
+        encode_flops = self._manual_encode_flops(x)
         top_acts, top_indices, pre_acts = self.encode(x)
 
         # If we aren't given a distinct target, we're autoencoding
         if y is None:
             y = x
 
-        # Decode
+        # Count decoding FLOPs
+        decode_flops = self._manual_decode_flops(top_acts)
         sae_out = self.decode(top_acts, top_indices)
         if self.W_skip is not None:
             sae_out += x.to(self.dtype) @ self.W_skip.mT
@@ -226,6 +335,8 @@ class SparseCoder(nn.Module):
 
         # Used as a denominator for putting everything on a reasonable scale
         total_variance = (y - y.mean(0)).pow(2).sum()
+        # Add small epsilon to prevent division by zero
+        total_variance = torch.clamp(total_variance, min=1e-8)
 
         # Second decoder pass for AuxK loss
         if dead_mask is not None and (num_dead := int(dead_mask.sum())) > 0:
@@ -261,6 +372,9 @@ class SparseCoder(nn.Module):
         else:
             multi_topk_fvu = sae_out.new_tensor(0.0)
 
+        # Get FLOPs counts
+        total_flops = encode_flops + decode_flops
+
         return ForwardOutput(
             sae_out,
             top_acts,
@@ -268,6 +382,9 @@ class SparseCoder(nn.Module):
             fvu,
             auxk_loss,
             multi_topk_fvu,
+            encode_flops,
+            decode_flops,
+            total_flops,
         )
 
     @torch.no_grad()

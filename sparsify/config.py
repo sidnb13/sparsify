@@ -36,6 +36,20 @@ class SparseCoderConfig(Serializable):
     """Whether we want to predict the output of a module given its input."""
 
 
+@dataclass
+class PKMConfig(Serializable):
+    """Configuration for a PKM."""
+
+    input_dropout: float = 0.0
+    """Dropout rate for the input layer."""
+
+    query_dropout: float = 0.0
+    """Dropout rate for the query layer."""
+
+    pre_layernorm: bool = False
+    """Apply layer normalization to the input."""
+
+
 # Support different naming conventions for the same configuration
 SaeConfig = SparseCoderConfig
 TranscoderConfig = partial(SparseCoderConfig, transcode=True)
@@ -44,6 +58,18 @@ TranscoderConfig = partial(SparseCoderConfig, transcode=True)
 @dataclass
 class TrainConfig(Serializable):
     sae: SparseCoderConfig
+
+    encode_method: Literal["linear", "pkm"] = "linear"
+    """Encoding method: 'linear' for standard encoder, 'pkm' for Product Key Memory."""
+
+    pkm_input_dropout: float = 0.0
+    """PKM: Dropout rate for the input layer."""
+
+    pkm_query_dropout: float = 0.0
+    """PKM: Dropout rate for the query layer."""
+
+    pkm_pre_layernorm: bool = False
+    """PKM: Apply layer normalization to the input."""
 
     batch_size: int = 32
     """Batch size measured in sequences."""
@@ -115,6 +141,9 @@ class TrainConfig(Serializable):
     wandb_log_frequency: int = 1
 
     save_dir: str = "checkpoints"
+
+    ctx_len: int = 2048
+    """Context length to use for training."""
 
     def __post_init__(self):
         """Validate the configuration."""
