@@ -77,15 +77,9 @@ class PKM(nn.Module):
         final_topk, final_indices = all_scores.topk(self.topk, dim=-1)
         value_indices = all_indices.gather(-1, final_indices)
 
-        # Apply ReLU to scores to get proper activations
-        # (matching linear encoder behavior)
-        final_activations = torch.nn.functional.relu(final_topk)
-
         # Return the final activations and indices
         return EncoderOutput(
-            rearrange(
-                final_activations, "b t ... -> (b t) ...", t=self.ctx_len
-            ),
-            rearrange(value_indices, "b t ... -> (b t) ...", t=self.ctx_len),
             rearrange(final_topk, "b t ... -> (b t) ...", t=self.ctx_len),
+            rearrange(value_indices, "b t ... -> (b t) ...", t=self.ctx_len),
+            None,
         )
