@@ -25,10 +25,10 @@ def get_device(force: str | None = None) -> str:
     """Get the best available device (CUDA, MPS, or CPU)."""
     if force:
         return force
-    
+
     if torch.cuda.is_available():
         return "cuda"
-    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return "mps"
     else:
         return "cpu"
@@ -101,7 +101,7 @@ def load_artifacts(
     args: RunConfig, rank: int
 ) -> tuple[PreTrainedModel, Dataset | MemmapDataset]:
     device = get_device(args.device)
-    
+
     if args.load_in_8bit:
         dtype = torch.float16
     elif device == "cuda" and torch.cuda.is_bf16_supported():
@@ -114,7 +114,7 @@ def load_artifacts(
 
     # End-to-end training requires a model with a causal LM head
     model_cls = AutoModel if args.loss_fn == "fvu" else AutoModelForCausalLM
-    
+
     # Set device map based on available device
     if device == "cuda":
         device_map = {"": f"cuda:{rank}"}
@@ -122,7 +122,7 @@ def load_artifacts(
         device_map = {"": "mps"}
     else:
         device_map = {"": "cpu"}
-    
+
     model = model_cls.from_pretrained(
         args.model,
         device_map=device_map,
@@ -186,7 +186,9 @@ def run():
     if ddp:
         # Only support DDP on CUDA for now
         if not torch.cuda.is_available():
-            print("Warning: DDP is only supported on CUDA devices. Falling back to single-device training.")
+            print(
+                "Warning: DDP is only supported on CUDA devices. Falling back to single-device training."
+            )
             ddp = False
         else:
             torch.cuda.set_device(rank)
@@ -204,7 +206,7 @@ def run():
     # Prevent ranks other than 0 from printing
     with nullcontext() if rank == 0 else redirect_stdout(None):
         model, dataset = load_artifacts(args, rank)
-        
+
         if ddp:
             dist.barrier()
             if rank != 0:
